@@ -1,0 +1,128 @@
+@if (Items == null || Items.Count == 0)
+{
+    <div class="alert alert-info" role="status">@EmptyMessage</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-hover align-middle">
+            <thead>
+                <tr>
+                    <th>Title</th>
+                    <th>Category</th>
+                    <th>Upload date</th>
+                    <th>Size</th>
+                    @if (ShowProject)
+                    {
+                        <th>Project</th>
+                    }
+                    @if (ShowUploader)
+                    {
+                        <th>Uploaded by</th>
+                    }
+                    <th class="text-end">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                @foreach (var item in Items)
+                {
+                    <tr>
+                        <td>
+                            <strong>@item.Title</strong>
+                            @if (!string.IsNullOrWhiteSpace(item.Description))
+                            {
+                                <br />
+                                <small class="text-muted">@item.Description</small>
+                            }
+                            @if (!string.IsNullOrWhiteSpace(item.Tags))
+                            {
+                                <br />
+                                @foreach (var tag in item.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    <span class="badge bg-light text-dark border me-1">@tag</span>
+                                }
+                            }
+                        </td>
+                        <td><span class="badge bg-secondary">@item.Category</span></td>
+                        <td>@item.UploadDate.ToString("MMM dd, yyyy")</td>
+                        <td>@FormatSize(item.FileSize)</td>
+                        @if (ShowProject)
+                        {
+                            <td>
+                                @if (item.ProjectId.HasValue)
+                                {
+                                    <a href="/projects/@item.ProjectId">@item.ProjectName</a>
+                                }
+                                else
+                                {
+                                    <span class="text-muted">-</span>
+                                }
+                            </td>
+                        }
+                        @if (ShowUploader)
+                        {
+                            <td>@item.UploadedByName</td>
+                        }
+                        <td class="text-end text-nowrap">
+                            <a class="btn btn-sm btn-outline-primary" href="/api/documents/@item.DocumentId/download"
+                               download="@item.OriginalFileName" title="Download" aria-label="Download @item.Title">
+                                <i class="bi bi-download"></i>
+                            </a>
+                            @if (item.CanPreview)
+                            {
+                                <a class="btn btn-sm btn-outline-secondary" href="/api/documents/@item.DocumentId/preview"
+                                   target="_blank" rel="noopener" title="Preview" aria-label="Preview @item.Title">
+                                    <i class="bi bi-eye"></i>
+                                </a>
+                            }
+                            @if (item.CanEdit && OnEdit.HasDelegate)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" title="Edit" aria-label="Edit @item.Title"
+                                        @onclick="() => OnEdit.InvokeAsync(item)">
+                                    <i class="bi bi-pencil"></i>
+                                </button>
+                            }
+                            @if (item.CanReplace && OnReplace.HasDelegate)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" title="Replace file" aria-label="Replace file for @item.Title"
+                                        @onclick="() => OnReplace.InvokeAsync(item)">
+                                    <i class="bi bi-arrow-repeat"></i>
+                                </button>
+                            }
+                            @if (item.CanShare && OnShare.HasDelegate)
+                            {
+                                <button class="btn btn-sm btn-outline-secondary" title="Share" aria-label="Share @item.Title"
+                                        @onclick="() => OnShare.InvokeAsync(item)">
+                                    <i class="bi bi-share"></i>
+                                </button>
+                            }
+                            @if (item.CanDelete && OnDelete.HasDelegate)
+                            {
+                                <button class="btn btn-sm btn-outline-danger" title="Delete" aria-label="Delete @item.Title"
+                                        @onclick="() => OnDelete.InvokeAsync(item)">
+                                    <i class="bi bi-trash"></i>
+                                </button>
+                            }
+                        </td>
+                    </tr>
+                }
+            </tbody>
+        </table>
+    </div>
+}
+
+@code {
+    [Parameter] public List<DocumentListItem>? Items { get; set; }
+    [Parameter] public bool ShowUploader { get; set; }
+    [Parameter] public bool ShowProject { get; set; } = true;
+    [Parameter] public string EmptyMessage { get; set; } = "No documents found.";
+    [Parameter] public EventCallback<DocumentListItem> OnEdit { get; set; }
+    [Parameter] public EventCallback<DocumentListItem> OnDelete { get; set; }
+    [Parameter] public EventCallback<DocumentListItem> OnShare { get; set; }
+    [Parameter] public EventCallback<DocumentListItem> OnReplace { get; set; }
+
+    private static string FormatSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024.0):0.#} MB"
+        : bytes >= 1024 ? $"{bytes / 1024.0:0.#} KB"
+        : $"{bytes} bytes";
+}

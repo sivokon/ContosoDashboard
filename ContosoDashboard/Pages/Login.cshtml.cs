@@ -62,6 +62,10 @@ namespace ContosoDashboard.Pages
                     new Claim(ClaimTypes.Role, user.Role.ToString())
                 };
 
+                // Display only; authorization reads the department from the database
+                if (!string.IsNullOrEmpty(user.Department))
+                    claims.Add(new Claim("Department", user.Department));
+
                 var claimsIdentity = new ClaimsIdentity(claims, CookieAuthenticationDefaults.AuthenticationScheme);
                 var authProperties = new AuthenticationProperties
                 {

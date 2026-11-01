@@ -1,0 +1,314 @@
+@inject IDocumentService DocumentService
+@inject IProjectService ProjectService
+
+<div class="modal-backdrop fade show"></div>
+<div class="modal d-block" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="uploadDialogTitle">
+    <div class="modal-dialog modal-lg modal-dialog-scrollable">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="uploadDialogTitle">Upload documents</h5>
+                <button type="button" class="btn-close" aria-label="Close" @onclick="Close" disabled="@isUploading"></button>
+            </div>
+
+            <div class="modal-body">
+                <div class="mb-3">
+                    <label for="uploadFiles" class="form-label">Files</label>
+                    <InputFile @key="inputKey" id="uploadFiles" class="form-control" OnChange="OnFilesSelected"
+                               multiple accept="@AcceptedExtensions" disabled="@isUploading" />
+                    <div class="form-text">
+                        @DocumentFileValidator.SupportedTypesDescription. Maximum @DocumentFileValidator.MaxSizeDescription per file.
+                    </div>
+                </div>
+
+                <div class="row g-3 mb-3">
+                    <div class="col-md-4">
+                        <label for="uploadCategory" class="form-label">Category <span class="text-danger">*</span></label>
+                        <select id="uploadCategory" class="form-select" @bind="category" disabled="@isUploading">
+                            <option value="">Select a category...</option>
+                            @foreach (var option in DocumentCategories.All)
+                            {
+                                <option value="@option">@option</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="uploadProject" class="form-label">Project (optional)</label>
+                        <select id="uploadProject" class="form-select" @bind="selectedProjectId"
+                                disabled="@(isUploading || ProjectId.HasValue)">
+                            <option value="">None</option>
+                            @foreach (var project in projects)
+                            {
+                                <option value="@project.ProjectId">@project.Name</option>
+                            }
+                        </select>
+                    </div>
+                    <div class="col-md-4">
+                        <label for="uploadTags" class="form-label">Tags (optional)</label>
+                        <input id="uploadTags" class="form-control" @bind="tags" maxlength="500"
+                               placeholder="comma, separated" disabled="@isUploading" />
+                    </div>
+                </div>
+
+                @if (!string.IsNullOrEmpty(validationMessage))
+                {
+                    <div class="alert alert-warning" role="alert">@validationMessage</div>
+                }
+
+                @if (entries.Count > 0)
+                {
+                    <div class="table-responsive">
+                        <table class="table align-middle">
+                            <thead>
+                                <tr>
+                                    <th>File</th>
+                                    <th>Title <span class="text-danger">*</span></th>
+                                    <th>Description</th>
+                                    <th>Status</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @foreach (var entry in entries)
+                                {
+                                    <tr>
+                                        <td>
+                                            @entry.Name<br />
+                                            <small class="text-muted">@FormatSize(entry.Size)</small>
+                                        </td>
+                                        <td>
+                                            <input class="form-control form-control-sm" @bind="entry.Title" maxlength="255"
+                                                   aria-label="Title for @entry.Name"
+                                                   disabled="@(isUploading || entry.Status != UploadStatus.Ready)" />
+                                        </td>
+                                        <td>
+                                            <input class="form-control form-control-sm" @bind="entry.Description" maxlength="2000"
+                                                   aria-label="Description for @entry.Name"
+                                                   disabled="@(isUploading || entry.Status != UploadStatus.Ready)" />
+                                        </td>
+                                        <td style="min-width: 12rem;">
+                                            @switch (entry.Status)
+                                            {
+                                                case UploadStatus.Ready:
+                                                    <span class="text-muted">Ready</span>
+                                                    break;
+                                                case UploadStatus.Uploading:
+                                                    <div class="progress" role="progressbar" aria-label="Upload progress for @entry.Name"
+                                                         aria-valuenow="@entry.Progress" aria-valuemin="0" aria-valuemax="100">
+                                                        <div class="progress-bar" style="width: @(entry.Progress)%">@entry.Progress%</div>
+                                                    </div>
+                                                    break;
+                                                case UploadStatus.Saved:
+                                                    <span class="text-success"><i class="bi bi-check-circle"></i> Saved</span>
+                                                    break;
+                                                case UploadStatus.Failed:
+                                                    <span class="text-danger"><i class="bi bi-x-circle"></i> @entry.Error</span>
+                                                    break;
+                                            }
+                                        </td>
+                                    </tr>
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                }
+            </div>
+
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" @onclick="Close" disabled="@isUploading">
+                    @(entries.Any(e => e.Status == UploadStatus.Saved) ? "Done" : "Cancel")
+                </button>
+                <button type="button" class="btn btn-primary" @onclick="UploadAsync"
+                        disabled="@(isUploading || !entries.Any(e => e.Status == UploadStatus.Ready))">
+                    <i class="bi bi-upload"></i> Upload @entries.Count(e => e.Status == UploadStatus.Ready) file(s)
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+@code {
+    private const int MaxFilesPerBatch = 20;
+    private const string AcceptedExtensions = ".pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.jpg,.jpeg,.png";
+
+    [Parameter, EditorRequired] public int UserId { get; set; }
+    [Parameter] public int? ProjectId { get; set; }
+    [Parameter] public int? TaskId { get; set; }
+    [Parameter] public EventCallback OnUploaded { get; set; }
+    [Parameter] public EventCallback OnClosed { get; set; }
+
+    private enum UploadStatus { Ready, Uploading, Saved, Failed }
+
+    private class UploadEntry
+    {
+        public IBrowserFile? File { get; set; }
+        public string Name { get; set; } = string.Empty;
+        public long Size { get; set; }
+        public string Title { get; set; } = string.Empty;
+        public string? Description { get; set; }
+        public UploadStatus Status { get; set; } = UploadStatus.Ready;
+        public int Progress { get; set; }
+        public string? Error { get; set; }
+    }
+
+    private readonly List<UploadEntry> entries = new();
+    private List<Project> projects = new();
+    private string category = string.Empty;
+    private string? selectedProjectId;
+    private string? tags;
+    private string? validationMessage;
+    private bool isUploading;
+    private object inputKey = new();
+
+    protected override async Task OnInitializedAsync()
+    {
+        projects = (await ProjectService.GetUserProjectsAsync(UserId)).ToList();
+        if (ProjectId.HasValue)
+            selectedProjectId = ProjectId.Value.ToString();
+    }
+
+    private void OnFilesSelected(InputFileChangeEventArgs e)
+    {
+        validationMessage = null;
+        entries.Clear();
+
+        foreach (var file in e.GetMultipleFiles(MaxFilesPerBatch))
+        {
+            // Capture metadata now; the stream is opened later and the reference cleared after copying
+            var entry = new UploadEntry
+            {
+                File = file,
+                Name = file.Name,
+                Size = file.Size,
+                Title = Path.GetFileNameWithoutExtension(file.Name)
+            };
+
+            var error = ValidateClientSide(entry);
+            if (error != null)
+            {
+                entry.Status = UploadStatus.Failed;
+                entry.Error = error;
+                entry.File = null;
+            }
+
+            entries.Add(entry);
+        }
+    }
+
+    private static string? ValidateClientSide(UploadEntry entry)
+    {
+        if (!DocumentFileValidator.IsSupportedExtension(DocumentFileValidator.GetExtension(entry.Name)))
+            return $"Unsupported file type. Supported types: {DocumentFileValidator.SupportedTypesDescription}.";
+        if (entry.Size <= 0)
+            return "The file is empty.";
+        if (entry.Size > DocumentFileValidator.MaxFileSizeBytes)
+            return $"The file is larger than the {DocumentFileValidator.MaxSizeDescription} limit.";
+        return null;
+    }
+
+    private async Task UploadAsync()
+    {
+        validationMessage = null;
+
+        if (string.IsNullOrEmpty(category))
+        {
+            validationMessage = "Please choose a category.";
+            return;
+        }
+
+        var ready = entries.Where(e => e.Status == UploadStatus.Ready).ToList();
+        if (ready.Any(e => string.IsNullOrWhiteSpace(e.Title)))
+        {
+            validationMessage = "Every file needs a title.";
+            return;
+        }
+
+        int? projectId = int.TryParse(selectedProjectId, out var parsedProjectId) ? parsedProjectId : null;
+        var anySaved = false;
+        isUploading = true;
+
+        foreach (var entry in ready)
+        {
+            entry.Status = UploadStatus.Uploading;
+            entry.Progress = 0;
+            StateHasChanged();
+
+            try
+            {
+                using var memoryStream = new MemoryStream();
+                await CopyWithProgressAsync(entry, memoryStream);
+                entry.File = null;
+                memoryStream.Position = 0;
+
+                var result = await DocumentService.UploadAsync(new DocumentUploadRequest
+                {
+                    Title = entry.Title,
+                    Description = entry.Description,
+                    Category = category,
+                    Tags = tags,
+                    ProjectId = projectId,
+                    TaskId = TaskId,
+                    OriginalFileName = entry.Name,
+                    ContentLength = entry.Size,
+                    Content = memoryStream
+                }, UserId);
+
+                if (result.Succeeded)
+                {
+                    entry.Status = UploadStatus.Saved;
+                    anySaved = true;
+                }
+                else
+                {
+                    entry.Status = UploadStatus.Failed;
+                    entry.Error = result.Error;
+                }
+            }
+            catch (Exception)
+            {
+                entry.File = null;
+                entry.Status = UploadStatus.Failed;
+                entry.Error = "The upload failed. Please try again.";
+            }
+
+            StateHasChanged();
+        }
+
+        isUploading = false;
+
+        if (anySaved)
+        {
+            // New key forces the InputFile to render fresh so the same files can be chosen again
+            inputKey = new object();
+            await OnUploaded.InvokeAsync();
+        }
+    }
+
+    private async Task CopyWithProgressAsync(UploadEntry entry, MemoryStream target)
+    {
+        var buffer = new byte[80 * 1024];
+        long copied = 0;
+        var lastPercent = -1;
+
+        await using var source = entry.File!.OpenReadStream(DocumentFileValidator.MaxFileSizeBytes);
+        int read;
+        while ((read = await source.ReadAsync(buffer)) > 0)
+        {
+            await target.WriteAsync(buffer.AsMemory(0, read));
+            copied += read;
+
+            var percent = entry.Size > 0 ? (int)(copied * 100 / entry.Size) : 0;
+            if (percent != lastPercent)
+            {
+                lastPercent = percent;
+                entry.Progress = percent;
+                await InvokeAsync(StateHasChanged);
+            }
+        }
+    }
+
+    private Task Close() => OnClosed.InvokeAsync();
+
+    private static string FormatSize(long bytes) =>
+        bytes >= 1024 * 1024 ? $"{bytes / (1024.0 * 1024.0):0.#} MB"
+        : bytes >= 1024 ? $"{bytes / 1024.0:0.#} KB"
+        : $"{bytes} bytes";
+}

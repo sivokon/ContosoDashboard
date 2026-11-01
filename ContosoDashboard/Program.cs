@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using ContosoDashboard.Data;
+using ContosoDashboard.Endpoints;
 using ContosoDashboard.Services;
 using Microsoft.AspNetCore.Authentication.Cookies;
 using Microsoft.AspNetCore.Components.Authorization;
@@ -43,6 +44,28 @@ builder.Services.AddScoped<ITaskService, TaskService>();
 builder.Services.AddScoped<IProjectService, ProjectService>();
 builder.Services.AddScoped<INotificationService, NotificationService>();
 builder.Services.AddScoped<IDashboardService, DashboardService>();
+
+// Document management: storage and malware scanning are swappable via these interfaces
+builder.Services.AddSingleton<IFileStorageService>(sp =>
+{
+    var env = sp.GetRequiredService<IWebHostEnvironment>();
+    var root = LocalFileStorageService.ResolveRoot(sp.GetRequiredService<IConfiguration>(), env.ContentRootPath);
+
+    // Uploaded files must never be web-accessible
+    var webRoot = Path.GetFullPath(env.WebRootPath ?? Path.Combine(env.ContentRootPath, "wwwroot"))
+        .TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    if ((root.TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar)
+        .StartsWith(webRoot, StringComparison.OrdinalIgnoreCase))
+    {
+        sp.GetRequiredService<ILogger<Program>>()
+            .LogError("FileStorage:RootPath must not be inside wwwroot: {Root}", root);
+        throw new InvalidOperationException("FileStorage:RootPath must not be inside wwwroot.");
+    }
+
+    return new LocalFileStorageService(root);
+});
+builder.Services.AddSingleton<IMalwareScanService, LocalSignatureScanService>();
+builder.Services.AddScoped<IDocumentService, DocumentService>();
 
 // Add HttpContextAccessor for accessing user claims
 builder.Services.AddHttpContextAccessor();
@@ -106,6 +129,7 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapBlazorHub();
+app.MapDocumentEndpoints();
 app.MapFallbackToPage("/_Host");
 
 app.Run();

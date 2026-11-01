@@ -1,0 +1,160 @@
+@page "/documents"
+@using System.Security.Claims
+@attribute [Authorize]
+@inject IDocumentService DocumentService
+@inject IProjectService ProjectService
+@inject AuthenticationStateProvider AuthenticationStateProvider
+
+<PageTitle>Documents - ContosoDashboard</PageTitle>
+
+<div class="container-fluid">
+    <div class="row mb-4">
+        <div class="col">
+            <h1>Documents</h1>
+        </div>
+        <div class="col-auto">
+            <button class="btn btn-primary" @onclick="() => showUpload = true" disabled="@(currentUserId == 0)">
+                <i class="bi bi-upload"></i> Upload
+            </button>
+        </div>
+    </div>
+
+    @if (!string.IsNullOrEmpty(statusMessage))
+    {
+        <div class="alert alert-success alert-dismissible" role="status">
+            @statusMessage
+            <button type="button" class="btn-close" aria-label="Close" @onclick="() => statusMessage = null"></button>
+        </div>
+    }
+
+    <h2 class="h4">My Documents</h2>
+
+    <!-- Sort and filters -->
+    <div class="row g-3 mb-4">
+        <div class="col-md-2">
+            <label for="sortField" class="form-label">Sort by</label>
+            <select id="sortField" class="form-select" @bind="sortField">
+                <option value="@DocumentSortField.UploadDate">Upload date</option>
+                <option value="@DocumentSortField.Title">Title</option>
+                <option value="@DocumentSortField.Category">Category</option>
+                <option value="@DocumentSortField.FileSize">File size</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label for="sortDirection" class="form-label">Direction</label>
+            <select id="sortDirection" class="form-select" @bind="sortDescending">
+                <option value="@true">Descending</option>
+                <option value="@false">Ascending</option>
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label for="filterCategory" class="form-label">Category</label>
+            <select id="filterCategory" class="form-select" @bind="filterCategory">
+                <option value="">All</option>
+                @foreach (var category in DocumentCategories.All)
+                {
+                    <option value="@category">@category</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label for="filterProject" class="form-label">Project</label>
+            <select id="filterProject" class="form-select" @bind="filterProjectId">
+                <option value="">All</option>
+                @foreach (var project in projects)
+                {
+                    <option value="@project.ProjectId">@project.Name</option>
+                }
+            </select>
+        </div>
+        <div class="col-md-2">
+            <label for="filterFrom" class="form-label">From</label>
+            <input id="filterFrom" type="date" class="form-control" @bind="filterFrom" />
+        </div>
+        <div class="col-md-2">
+            <label for="filterTo" class="form-label">To</label>
+            <input id="filterTo" type="date" class="form-control" @bind="filterTo" />
+        </div>
+        <div class="col-12">
+            <button class="btn btn-secondary me-2" @onclick="LoadDocuments">Apply</button>
+            <button class="btn btn-outline-secondary" @onclick="ResetFilters">Reset</button>
+        </div>
+    </div>
+
+    @if (documents == null)
+    {
+        <p><em>Loading...</em></p>
+    }
+    else
+    {
+        <DocumentList Items="documents" ShowProject="true"
+                      EmptyMessage="No documents match. Upload a document to get started." />
+    }
+</div>
+
+@if (showUpload)
+{
+    <DocumentUploadDialog UserId="currentUserId" OnUploaded="HandleUploaded" OnClosed="CloseUpload" />
+}
+
+@code {
+    private List<DocumentListItem>? documents;
+    private List<Project> projects = new();
+    private int currentUserId;
+    private bool showUpload;
+    private string? statusMessage;
+
+    private DocumentSortField sortField = DocumentSortField.UploadDate;
+    private bool sortDescending = true;
+    private string filterCategory = string.Empty;
+    private string filterProjectId = string.Empty;
+    private DateTime? filterFrom;
+    private DateTime? filterTo;
+
+    protected override async Task OnInitializedAsync()
+    {
+        var authState = await AuthenticationStateProvider.GetAuthenticationStateAsync();
+        var userIdClaim = authState.User.FindFirst(ClaimTypes.NameIdentifier);
+        if (userIdClaim != null && int.TryParse(userIdClaim.Value, out var userId))
+            currentUserId = userId;
+
+        if (currentUserId > 0)
+        {
+            projects = (await ProjectService.GetUserProjectsAsync(currentUserId)).ToList();
+            await LoadDocuments();
+        }
+    }
+
+    private async Task LoadDocuments()
+    {
+        documents = await DocumentService.GetDocumentsAsync(new DocumentQuery
+        {
+            Scope = DocumentScope.Mine,
+            SortBy = sortField,
+            SortDescending = sortDescending,
+            Category = string.IsNullOrEmpty(filterCategory) ? null : filterCategory,
+            ProjectId = int.TryParse(filterProjectId, out var projectId) ? projectId : null,
+            FromDate = filterFrom,
+            ToDate = filterTo
+        }, currentUserId);
+    }
+
+    private async Task ResetFilters()
+    {
+        sortField = DocumentSortField.UploadDate;
+        sortDescending = true;
+        filterCategory = string.Empty;
+        filterProjectId = string.Empty;
+        filterFrom = null;
+        filterTo = null;
+        await LoadDocuments();
+    }
+
+    private async Task HandleUploaded()
+    {
+        statusMessage = "Upload complete.";
+        await LoadDocuments();
+    }
+
+    private void CloseUpload() => showUpload = false;
+}
